@@ -1,0 +1,199 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed May 31 20:09:52 2017
+
+@author: 15351
+"""
+
+from __future__ import division, print_function, absolute_import
+import tflearn
+#import speech_data
+import tensorflow as tf
+import os
+import numpy
+import numpy as np
+import librosa as lsa
+from random import shuffle
+from sklearn.preprocessing import MinMaxScaler
+from keras.datasets import mnist
+from keras.utils import np_utils
+from keras.models import Sequential
+from keras.layers import Dense, Dropout, Activation, Flatten
+from keras.layers import Convolution2D, MaxPooling2D
+
+learning_rate = 0.0001
+training_iters = 2  # steps  300000
+batch_size = 64
+
+width = 20  # mfcc features
+height = 80  # (max) length of utterance
+classes = 10  # digits
+path ="C:/Users/15351/tensorflow_speech_recognition_demo/tensorflow_speech_recognition_demo-master/data/spoken_numbers_pcm/" # 8 bit
+def getMatrix(rows,cols):  
+    matrix = [[0 for col in range(cols)] for row in range(rows)]  
+    for i in range(rows):  
+        for j in range(cols):  
+            print (matrix[i][j],)  
+        print ('\n') 
+    return matrix
+# 矩阵归一化
+def scale(data):
+    scaled_data = []
+    cols=80
+    rows=20
+    for index in range(len(data)):
+        index_max = np.max(data[index])
+        index_min = np.min(data[index])
+        range_Min_Max = index_max-index_min
+        matrix = [[0 for col in range(cols)] for row in range(rows)]  
+        for i in range(rows):
+            for j in range(cols):
+                matrix[i][j] = (data[index][i][j]-index_min)/range_Min_Max    
+        scaled_data.append(matrix)    
+    return scaled_data       
+
+def dense_to_one_hot(labels_dense, num_classes=10):
+  """Convert class labels from scalars to one-hot vectors."""
+  return numpy.eye(num_classes)[labels_dense]
+
+def mfcc_batch_generator(batch_size=10, source='spoken_numbers_pcm.tar', target=1):
+ # maybe_download(source, DATA_DIR)
+  #if target == 2: ['Alex','Samantha','Ralph','Victoria','Agnes','Tom','Princess','Vicki','Steffi','Junior','Albert','Fred','Kathy','Bruce','Daniel']
+  #speakers = get_speakers()
+  batch_features = []
+  labels = []
+  files = os.listdir(path)
+  while True:
+    print("loaded batch of %d files" % len(files))
+    shuffle(files)
+    for wav in files:
+      if not wav.endswith(".wav"): continue
+      wave, sr = lsa.load(path+wav, mono=True)
+      if target==1: label=dense_to_one_hot(int(wav[0]),10)
+     # elif target==1:  label=dense_to_one_hot(int(wav[0]),10)
+     # elif target==Target.first_letter:  label=dense_to_one_hot((ord(wav[0]) - 48) % 32,32)
+      else: raise Exception("todo : labels for Target!")
+      labels.append(label)
+      mfcc = lsa.feature.mfcc(wave, sr)
+      # print(np.array(mfcc).shape)
+      mfcc=np.pad(mfcc,((0,0),(0,80-len(mfcc[0]))), mode='constant', constant_values=0)
+      batch_features.append(np.array(mfcc))
+      if len(batch_features) >= batch_size:
+        # print(np.array(batch_features).shape)
+        # yield np.array(batch_features), labels
+        yield batch_features, labels  # basic_rnn_seq2seq inputs must be a sequence
+        batch_features = []  # Reset for next batch
+        labels = []
+
+batch = word_batch = mfcc_batch_generator(batch_size)
+X, Y = next(batch)
+trainX, trainY = X, Y
+testX, testY = X, Y #overfit for now
+
+trainX_scaled = scale(trainX)
+trainX = np.reshape(trainX_scaled,[64,20,80])
+
+trainX = np.reshape(trainX,[64,20,80,1])
+trainX = trainX.astype("float32")
+trainY = np.reshape(trainY,[64,10])
+trainY = trainY.astype("float32")
+
+testX_scaled = scale(testX)
+testX = np.reshape(testX_scaled,[64,20,80])
+
+testX = np.reshape(testX,[64,20,80,1]) 
+testY = np.reshape(testY,[64,10])
+testX = testX.astype('float32')
+testY = testY.astype('float32')
+
+#img_rows=28
+#img_cols=28
+#nb_classes = 10
+#(X_train, y_train), (X_test, y_test) = mnist.load_data()
+#X_train1 = X_train.reshape(X_train.shape[0], img_rows, img_cols, 1)
+#Y_train = np_utils.to_categorical(y_train, nb_classes)
+
+#创建网络
+nb_filters=50
+nb_classes=10
+model = Sequential()
+model.add(Convolution2D(nb_filters,
+                        kernel_size=(2, 4),
+                        strides=(2, 4),
+                        padding='valid',
+                        input_shape=(20,80,1),
+                        activation='relu')) # 卷积层                       
+
+model.add(Convolution2D(nb_filters, 
+                        kernel_size=(2,4),
+                        strides=(2, 4),
+                        padding='valid',
+                        activation='relu')) # 卷积层
+                        
+model.add(MaxPooling2D(pool_size=(3,3),
+                       strides=(2,2),
+                       padding='valid')) # Maxpooling                       
+model.add(Dropout(0.25)) # Dropout
+
+model.add(Flatten()) # 将响应转换为一维向量
+
+model.add(Dense(300)) # 全连接层
+model.add(Activation('relu')) # ReLU
+model.add(Dropout(0.5)) # Dropout
+
+model.add(Dense(nb_classes)) # 分类层
+model.add(Activation('softmax')) # Softmax
+
+model.summary() # 打印模型
+model.compile(loss='categorical_crossentropy',
+              optimizer='adadelta',
+              metrics=['accuracy']) # 生成模型 配置模型的学习过程
+#训练模型
+"""
+训练模型的数据说明
+trainX trainY testX testY 使用的是没有归一化的数据作为训练模型，只是将其变幻成CNN模型
+需要的数据结构如trainX = np.reshape(trainX,[64,20,80,1])，没有使用scale函数
+nb_filters=50这个参数对模型的测试精度有重要影响
+"""
+for r in range(10):
+    model.fit(trainX, trainY, 
+                batch_size=8,
+                epochs=10, 
+                verbose=1,
+                validation_data=(testX, testY))
+    pred_y=model.predict(trainX)
+    print("这是模型训练的第 %d 次)" % (r+1))
+# model.fit(trainX, trainY, nb_epoch=10, batch_size=64)
+# 按batch计算在某些输入数据上模型的误差
+score = model.evaluate(testX, testY, verbose=0)
+print('Test score:', score[0])
+print('Test accuracy:', score[1])
+
+
+loss_and_metrics = model.evaluate(testX, testY, batch_size=64)
+model.save("cnn.speech.model")
+
+print (pred_y)
+#print (Y)
+pred = pred_y
+          
+import pandas as pd
+df = pd.read_csv("_y1.csv")
+
+#保存变量的到文件中
+import csv
+#导出list变量到csv文件中
+def createListCSV(fileName="", dataList=[]):
+
+    with open(fileName, "w",newline='') as csvFile:
+        csvWriter = csv.writer(csvFile,delimiter=',') 
+        for data in dataList:
+            csvWriter.writerow(data)
+            csvFile.close
+
+createListCSV("Y.csv", Y)
+createListCSV("_y.csv", _y)
+
+
+
+              
